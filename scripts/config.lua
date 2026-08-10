@@ -18,7 +18,8 @@ config.maxClientsPerIP = 3
 config.difficulty = 0
 
 -- The game settings to enforce for players
--- Note 1: Anything from the [Game] category in settings-default.cfg can be added here
+-- Note 1: Anything from OpenMW's game settings can be added here, which means anything listed
+--         on https://openmw.readthedocs.io/en/latest/reference/modding/settings/game.html
 -- Note 2: Some settings, such as "difficulty" and "actors processing range", cannot be
 --         changed from here
 config.gameSettings = {
@@ -88,25 +89,25 @@ config.allowWildernessRest = true
 config.allowWait = true
 
 -- Whether journal entries should be shared across the players on the server or not
-config.shareJournal = true
+config.shareJournal = false
 
 -- Whether faction ranks should be shared across the players on the server or not
-config.shareFactionRanks = true
+config.shareFactionRanks = false
 
 -- Whether faction expulsion should be shared across the players on the server or not
 config.shareFactionExpulsion = false
 
 -- Whether faction reputation should be shared across the players on the server or not
-config.shareFactionReputation = true
+config.shareFactionReputation = false
 
 -- Whether dialogue topics should be shared across the players on the server or not
-config.shareTopics = true
+config.shareTopics = false
 
 -- Whether crime bounties should be shared across players on the server or not
 config.shareBounty = false
 
 -- Whether reputation should be shared across players on the server or not
-config.shareReputation = true
+config.shareReputation = false
 
 -- Whether map exploration should be shared across players on the server or not
 config.shareMapExploration = false
