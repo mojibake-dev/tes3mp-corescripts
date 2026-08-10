@@ -1,6 +1,6 @@
 -- Vendored from Lear's Periodic Cell Reset (github.com/Learwolf/TES3MP-0.8-Scripts), v1.13, GPL-compatible.
 -- mojibake patch: preserve player-placed (dropped) objects across resets (see doCellReset below),
--- approach adapted from Atkana's CellReset (github.com/Atkana/tes3mp-scripts). Interval widened to 3 days.
+-- approach adapted from Atkana's CellReset (github.com/Atkana/tes3mp-scripts). Interval set to 2 days.
 
 --[[
 	Lear's Periodic Cell Reset Script
@@ -68,8 +68,8 @@ periodicCellResets = {} -- No touchy this line.
 
 local cellResetTimeCheck = 300 -- Every x seconds (300 = 5 minutes), check unloaded cells to see if a reset is ready.
 
-local exteriorCellResetTime = 259200 -- Exterior cells reset every 21600 seconds (6 hours) of real time.
-local interiorCellResetTime = 259200 -- Interior cells reset every 14400 seconds (4 hours) of real time.
+local exteriorCellResetTime = 172800 -- Exterior cells reset every 21600 seconds (6 hours) of real time.
+local interiorCellResetTime = 172800 -- Interior cells reset every 14400 seconds (4 hours) of real time.
 -- For the above two values, they will push a cell reset upon loading up a respective cell for the first 
 -- time, x amount of seconds from when it was first initialized.
 
