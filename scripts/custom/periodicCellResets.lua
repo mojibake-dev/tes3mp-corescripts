@@ -96,6 +96,9 @@ periodicCellResets.exemptCellNamesExact = { -- Exact cell names included in this
 	"-1, -10",
 	"-2, -9",
 	"-2, -10",
+
+	-- Player stash protection (loose drops survive resets, but container storage does not):
+	"Balmora, Caius Cosades' House",
 	
 }
 
