@@ -1,8 +1,10 @@
 -- JournalMainQuestOnly (frontier-aware).
 --
 -- On this server journals are per-player (config.shareJournal = false, an
--- "independent playthrough"). This CoreScript re-shares ONLY the MAIN QUEST so
--- the group stays on the same main-quest page while side quests stay personal.
+-- "independent playthrough"). This CoreScript re-shares the MAIN QUEST, plus a
+-- curated set of shared side quests (the Twin Lamps abolitionist arc; see
+-- sharedSideQuests below), so the group stays on the same page there while other
+-- side quests stay personal.
 --
 -- Model: a group "frontier" -- the furthest index reached for each main-quest
 -- quest -- lives in WorldInstance.data.customVariables and is persisted, so it
@@ -45,9 +47,23 @@ local dlcMainQuest = {
 	["bm_lycanthropycure"]=true, ["bm_wolfgiver"]=true, ["bm_wolfgiver_a"]=true, ["bm_sadseer"]=true,
 }
 
+-- Curated non-main quests we also keep in lockstep across the group: the vanilla Twin Lamps
+-- abolitionist arc (Ilmeni Dren) plus the escaped-slave side quests, so the party frees slaves
+-- together. Journal ids are lowercased. Paired with the freedslavescounter/madurarescued
+-- worldwide-global share in clientVariableScopes.lua (the counter half of the same feature).
+local sharedSideQuests = {
+	-- Twin Lamps / Ilmeni Dren (no vanilla TwinLamps2) + Jobasha's free-31-slaves book reward
+	["hh_literacycampaign"]=true, ["hh_twinlamps1"]=true, ["hh_twinlamps3"]=true, ["ms_jobashaabolitionist"]=true,
+	-- escaped-slave encounters, the Madura Seran rescue (madurarescued global), + the Bal Molagmer slaver job
+	["il_rescuepilgrim"]=true, ["mv_runawayslave"]=true, ["mv_fakeslave"]=true, ["mv_bountyhunter"]=true, ["tg_ss_greedyslaver"]=true,
+}
+
+-- True for a shared main-quest id OR a curated shared side quest (Twin Lamps / slave-freeing).
 function Methods.IsMainQuestId(quest)
 	local q = string.lower(quest or "")
-	return tableHelper.containsValue(mainQuestPrefixes, string.sub(q, 1, 2)) or dlcMainQuest[q] == true
+	return tableHelper.containsValue(mainQuestPrefixes, string.sub(q, 1, 2))
+		or dlcMainQuest[q] == true
+		or sharedSideQuests[q] == true
 end
 
 -- The group main-quest frontier: { [questLower] = { quest, index, type, actorRefId, timestamp } }.

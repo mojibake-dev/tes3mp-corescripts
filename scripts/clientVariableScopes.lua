@@ -67,8 +67,6 @@ if tableHelper.containsCaseInsensitiveString(clientDataFiles, "Morrowind.esm") t
                 -- Note: These are related to kill counts, but they make more sense being shared across
                 --       players who share quests than being shared across players who share kills
                 "mt_legitkills", "mt_newcrimelevel", "mt_writdiscount",
-                -- side quests for rescues
-                "freedslavescounter", "madurarescued",
                 -- other side quests
                 "threadswebspinner", "monopolyvotes", "bone", "ownershiphhcs"
             },
@@ -93,7 +91,11 @@ if tableHelper.containsCaseInsensitiveString(clientDataFiles, "Morrowind.esm") t
                 -- building construction
                 "stronghold",
                 -- whether duel arenas are occupied
-                "duelactive"
+                "duelactive",
+                -- mojibake: co-op Twin Lamps abolitionist progress. Moved here from `quest` so it
+                -- shares unconditionally; quest-scope sync is gated on config.shareJournal, which is
+                -- false in this independent playthrough. Lets the whole group free slaves together.
+                "freedslavescounter", "madurarescued"
             },
             unknown = {
             }
