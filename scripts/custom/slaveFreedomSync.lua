@@ -56,6 +56,15 @@ local function log(level, msg)
     tes3mp.LogMessage(level, "[slaveFreedomSync] " .. msg)
 end
 
+-- Wrap handlers so a bug logs an error instead of crashing the whole server (the CoreScripts call
+-- event handlers unguarded; an uncaught Lua error there takes the server down).
+local function safe(name, fn)
+    return function(...)
+        local ok, err = pcall(fn, ...)
+        if not ok then log(enumerations.log.ERROR, name .. " error (server kept alive): " .. tostring(err)) end
+    end
+end
+
 local function worldFreedCount()
     local cv = WorldInstance.data.clientVariables
     if cv and cv.globals and cv.globals.freedslavescounter and cv.globals.freedslavescounter.intValue then
@@ -105,10 +114,10 @@ local function flush(pid)
     end
 end
 
-customEventHooks.registerHandler("OnServerPostInit", function()
+customEventHooks.registerHandler("OnServerPostInit", safe("OnServerPostInit", function()
     lastFreedCount = worldFreedCount()
     log(enumerations.log.INFO, "armed; freedslavescounter baseline = " .. tostring(lastFreedCount))
-end)
+end))
 
 Methods.OnClientScriptGlobal = function(eventStatus, pid, variables)
     if variables == nil then return end
@@ -148,8 +157,8 @@ end
 Methods.OnPlayerCellChange = function(eventStatus, pid) flush(pid) end
 Methods.OnPlayerDisconnect = function(eventStatus, pid) flush(pid) end
 
-customEventHooks.registerHandler("OnClientScriptGlobal", Methods.OnClientScriptGlobal)
-customEventHooks.registerHandler("OnPlayerCellChange", Methods.OnPlayerCellChange)
-customEventHooks.registerHandler("OnPlayerDisconnect", Methods.OnPlayerDisconnect)
+customEventHooks.registerHandler("OnClientScriptGlobal", safe("OnClientScriptGlobal", Methods.OnClientScriptGlobal))
+customEventHooks.registerHandler("OnPlayerCellChange", safe("OnPlayerCellChange", Methods.OnPlayerCellChange))
+customEventHooks.registerHandler("OnPlayerDisconnect", safe("OnPlayerDisconnect", Methods.OnPlayerDisconnect))
 
 return Methods
