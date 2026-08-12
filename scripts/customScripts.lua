@@ -10,3 +10,6 @@ require("custom.tes3mp_bridge")
 require("custom/JournalMainQuestOnly/main")
 
 require("custom.periodicCellResets")
+
+require("custom.slaveFreedomSync")
+require("custom.noFriendlyFire")

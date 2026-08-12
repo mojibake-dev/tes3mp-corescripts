@@ -385,6 +385,11 @@ local doCellReset = function(pid, cellDescription)
 		if _oldPackets.place ~= nil then
 			for _, _ui in pairs(_oldPackets.place) do _preserve[_ui] = true end
 		end
+		-- [mojibake] also preserve deletions (e.g. freed slaves removed by slaveFreedomSync) so a
+		-- reset does not resurrect them; the restore loops below re-seed packets.delete + objectData.
+		if _oldPackets.delete ~= nil then
+			for _, _ui in pairs(_oldPackets.delete) do _preserve[_ui] = true end
+		end
 
 		_cell.isResetting = true
 		_cell.data.objectData = {}
