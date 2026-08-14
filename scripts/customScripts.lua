@@ -13,3 +13,4 @@ require("custom.periodicCellResets")
 
 require("custom.slaveFreedomSync")
 require("custom.noFriendlyFire")
+require("custom.absorbHealthFix")

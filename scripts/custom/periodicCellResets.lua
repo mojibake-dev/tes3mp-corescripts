@@ -361,6 +361,31 @@ local interiorCellExemption = function(cellDescription)
 	return false
 end
 
+-- [mojibake] Is this refId a harvestable-plant (flora) container? Runtime refId check (no baked
+-- table): every flora CONT across the modlist (744 of them) carries "flora" or "kollop" in its
+-- refId; the only "flora_"-named storage edges (swtbarrel, veilurn) are excluded. Safe: no
+-- chest/barrel/crate/pot/sack/urn/box refId contains "flora" or "kollop".
+local function isFlora(refId)
+	if refId == nil then return false end
+	local r = string.lower(refId)
+	if string.find(r, "barrel", 1, true) or string.find(r, "veilurn", 1, true) then return false end
+	return string.find(r, "flora", 1, true) ~= nil or string.find(r, "kollop", 1, true) ~= nil
+end
+
+local function mojibakeFloraClear(cellDescription)
+	local _cell = LoadedCells[cellDescription]
+	if _cell == nil then return end
+	local _floraUis = {}
+	for _ui, _obj in pairs(_cell.data.objectData) do
+		if isFlora(_obj.refId) then table.insert(_floraUis, _ui) end
+	end
+	for _, _ui in ipairs(_floraUis) do
+		_cell.data.objectData[_ui] = nil
+		for _, _list in pairs(_cell.data.packets) do tableHelper.removeValue(_list, _ui) end
+	end
+	_cell:QuicksaveToDrive()
+end
+
 local doCellReset = function(pid, cellDescription)
 	
 	local txt = color.Error.."That cell is not in the reset table."
@@ -373,61 +398,33 @@ local doCellReset = function(pid, cellDescription)
 			unloadAtEnd = true
 		end
 		
-		-- [mojibake] Preserve player/script-placed (dropped) objects across the reset so
-		-- dropped loot persists while everything else regenerates from base. Approach
-		-- adapted from Atkana's CellReset alwaysPreservePlaced. Vanilla items survive
-		-- cleanly; a custom-record item dropped loose is a known edge (its generated
-		-- record link is cleared by the reset below).
+		-- [mojibake] "one live world" flora-only refill. The old code called tes3mp.SendCellReset,
+		-- forcing a full base-regenerate: it resurrected killed NPCs, refilled every chest, and rolled
+		-- fresh leveled spawns. Instead we clear ONLY the saved state of harvestable-plant (flora)
+		-- containers; with their looted state gone from objectData + every packet list, the client
+		-- reloads them FULL from the ESM on the next visit, so alchemy ingredients regrow while kills
+		-- stay dead, chests stay looted, and dropped / deleted objects persist untouched. No SendCellReset.
 		local _cell = LoadedCells[cellDescription]
-		local _oldObjectData = _cell.data.objectData
-		local _oldPackets = _cell.data.packets
-		local _preserve = {}
-		if _oldPackets.place ~= nil then
-			for _, _ui in pairs(_oldPackets.place) do _preserve[_ui] = true end
+		local _floraUis = {}
+		for _ui, _obj in pairs(_cell.data.objectData) do
+			if isFlora(_obj.refId) then table.insert(_floraUis, _ui) end
 		end
-		-- [mojibake] also preserve deletions (e.g. freed slaves removed by slaveFreedomSync) so a
-		-- reset does not resurrect them; the restore loops below re-seed packets.delete + objectData.
-		if _oldPackets.delete ~= nil then
-			for _, _ui in pairs(_oldPackets.delete) do _preserve[_ui] = true end
+		for _, _ui in ipairs(_floraUis) do
+			_cell.data.objectData[_ui] = nil
+			for _, _list in pairs(_cell.data.packets) do tableHelper.removeValue(_list, _ui) end
 		end
-
-		_cell.isResetting = true
-		_cell.data.objectData = {}
-		_cell.data.packets = {}
-		_cell:EnsurePacketTables()
-		_cell.data.loadState.hasFullActorList = false
-		_cell.data.loadState.hasFullContainerData = false
-		_cell:ClearRecordLinks()
-
-		-- restore the preserved placed objects into the freshly-reset cell
-		for _packetKey, _uiList in pairs(_oldPackets) do
-			if _cell.data.packets[_packetKey] ~= nil then
-				for _, _ui in pairs(_uiList) do
-					if _preserve[_ui] then tableHelper.insertValueIfMissing(_cell.data.packets[_packetKey], _ui) end
-				end
-			end
-		end
-		for _ui in pairs(_preserve) do
-			if _oldObjectData[_ui] ~= nil then _cell.data.objectData[_ui] = _oldObjectData[_ui] end
-		end
+		_cell:QuicksaveToDrive()
 		
 		-- Unload a temporarily loaded cell
 		if unloadAtEnd then
 			logicHandler.UnloadCell(cellDescription)
 		end
 		
-		tes3mp.ClearCellsToReset()
-		tes3mp.AddCellToReset(cellDescription)
-		tes3mp.SendCellReset(pid, true)
-		
 		cellResetTimers[cellDescription] = nil
-		
 		tableHelper.cleanNils(cellResetTimers)
 		SaveCellResetTimers()
 		
-		removeCustomRecordsFromResetCell(cellDescription) -- Remove custom record links from a cell when the cell is reset.
-		
-		txt = color.Green..cellDescription..color.White.." has been reset and is no longer in the list of cells to reset."
+		txt = color.Green..cellDescription..color.White.." flora refreshed ("..#_floraUis.." plant(s)); persistent world kept."
 	end
 	tes3mp.SendMessage(pid, color.Yellow.."[CellResets]: "..txt.."\n")
 end
@@ -478,22 +475,13 @@ local pushCellResetsEarly = function(pid, cmd)
 								unloadAtEnd = true
 							end
 
-							LoadedCells[cellDescription].isResetting = true
-							LoadedCells[cellDescription].data.objectData = {}
-							LoadedCells[cellDescription].data.packets = {}
-							LoadedCells[cellDescription]:EnsurePacketTables()
-							LoadedCells[cellDescription].data.loadState.hasFullActorList = false
-							LoadedCells[cellDescription].data.loadState.hasFullContainerData = false
-							LoadedCells[cellDescription]:ClearRecordLinks()
+							mojibakeFloraClear(cellDescription)
 
 							-- Unload a temporarily loaded cell
 							if unloadAtEnd then
 								logicHandler.UnloadCell(cellDescription)
 							end
 
-							tes3mp.ClearCellsToReset()
-							tes3mp.AddCellToReset(cellDescription)
-							tes3mp.SendCellReset(pid, true)
 							
 							cellResetTimers[cellDescription] = nil
 							
@@ -564,22 +552,13 @@ local pushResetAllCells = function(pid, cmd)
 							unloadAtEnd = true
 						end
 
-						LoadedCells[cellDescription].isResetting = true
-						LoadedCells[cellDescription].data.objectData = {}
-						LoadedCells[cellDescription].data.packets = {}
-						LoadedCells[cellDescription]:EnsurePacketTables()
-						LoadedCells[cellDescription].data.loadState.hasFullActorList = false
-						LoadedCells[cellDescription].data.loadState.hasFullContainerData = false
-						LoadedCells[cellDescription]:ClearRecordLinks()
+						mojibakeFloraClear(cellDescription)
 
 						-- Unload a temporarily loaded cell
 						if unloadAtEnd then
 							logicHandler.UnloadCell(cellDescription)
 						end
 
-						tes3mp.ClearCellsToReset()
-						tes3mp.AddCellToReset(cellDescription)
-						tes3mp.SendCellReset(pid, true)
 						
 						cellResetTimers[cellDescription] = nil
 						
@@ -736,22 +715,13 @@ periodicCellResets.UpdateResetTimers = function()
 										unloadAtEnd = true
 									end
 
-									LoadedCells[cellDescription].isResetting = true
-									LoadedCells[cellDescription].data.objectData = {}
-									LoadedCells[cellDescription].data.packets = {}
-									LoadedCells[cellDescription]:EnsurePacketTables()
-									LoadedCells[cellDescription].data.loadState.hasFullActorList = false
-									LoadedCells[cellDescription].data.loadState.hasFullContainerData = false
-									LoadedCells[cellDescription]:ClearRecordLinks()
+									mojibakeFloraClear(cellDescription)
 
 									-- Unload a temporarily loaded cell
 									if unloadAtEnd then
 										logicHandler.UnloadCell(cellDescription)
 									end
 
-									tes3mp.ClearCellsToReset()
-									tes3mp.AddCellToReset(cellDescription)
-									tes3mp.SendCellReset(pid, true)
 								end
 								
 								cellResetTimers[cellDescription] = nil
