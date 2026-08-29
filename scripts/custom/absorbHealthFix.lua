@@ -1,74 +1,97 @@
 -- absorbHealthFix.lua
--- [mojibake] Fixes TES3MP issue #603: Absorb Health drains the target but does NOT heal the caster
--- when the caster lacks the target cell's authority (the heal-side effectTick only runs on the
--- authoritative client; when another player is authority, only the drain-side stat sync wins).
+-- [mojibake] Fixes TES3MP #603: Absorb Health drains the target but does NOT heal the caster
+-- when the caster is not the target's authority.
 --
--- The data IS reachable: OpenMW mirrors the absorbed effect onto the CASTER as an ActiveSpell
--- (linkedeffects.cpp) which emits ID_PLAYER_SPELLS_ACTIVE. So the caster's own packet carries an
--- ABSORB_HEALTH (86) effect whose caster.pid == the caster. We restore the caster's health server-
--- side, but ONLY when they are NOT the cell authority (else the engine already healed them locally,
--- and an unconditional heal would double).
+-- ROOT CAUSE (corrected model): OpenMW mirrors the caster's heal-side as a linked effect
+-- (mwmechanics/linkedeffects.cpp), but in multiplayer that mirror never reliably rides the
+-- CASTER's own packet. The absorb reaches the server on the TARGET's packet: a player target ->
+-- that player's PlayerSpellsActive; an NPC/creature target -> the cell owner's ActorSpellsActive.
+-- In both, the absorb instance has hasPlayerCaster=true and caster.pid = the caster, with the
+-- drain magnitude POSITIVE. (The previous patch keyed on caster.pid == the packet owner, the one
+-- shape that never occurs, so it never fired -- confirmed by an empty diagnostic log across a full
+-- day of casting.)
 --
--- Conservative + observable: heals by |magnitude| (never damages), capped at base health, on the ADD
--- action (once per cast). It logs every self-absorb (action, magnitude, authority) so the exact
--- semantics can be confirmed live and tuned (e.g. lasting-duration absorbs, which currently heal by
--- the base magnitude only, and the ADD-action value below).
+-- FIX: on an ADD action, for each ABSORB_HEALTH (86) instance with a player caster whose
+-- caster.pid ~= the packet owner (the target/sender), heal that caster by sum(magnitude*duration),
+-- capped at their base health. "caster.pid ~= ownerPid" IS the anti-double-heal condition: a
+-- client only emits a packet for what it owns, and only heals the caster locally when it owns the
+-- target, so if the caster IS the sender the engine already healed them locally -> skip.
+--   PvP:            owner = target player, caster ~= owner -> heal (never healed locally). OK.
+--   PvE, caster is authority: owner = caster -> caster.pid == owner -> skip (already healed). OK.
+--   PvE, other authority:     owner = that player, caster ~= owner -> heal. OK.
 
 local AbsorbHealthFix = {}
 
--- spellsActive change action follows the SET=0 / ADD=1 / REMOVE=2 convention. Confirmed via the
--- diagnostic log below if it ever differs.
-local ADD_ACTION = 1
+local ADD_ACTION = 1   -- SpellsActive change action: SET=0 / ADD=1 / REMOVE=2
 
 local function log(level, msg) tes3mp.LogMessage(level, "[absorbHealthFix] " .. msg) end
 
-AbsorbHealthFix.OnPlayerSpellsActive = function(eventStatus, pid, playerPacket)
-    if playerPacket == nil or playerPacket.spellsActive == nil then return end
-    local caster = Players[pid]
-    if caster == nil or not caster:IsLoggedIn() then return end
-
-    -- Sum the caster's OWN Absorb Health magnitude in this packet (caster.pid == pid = self-cast mirror).
-    local heal = 0
-    for _spellId, instances in pairs(playerPacket.spellsActive) do
+-- Sum each caster's Absorb Health across one spellsActive map. ownerPid = the packet owner (the
+-- drained player, or the actor-cell authority). Returns { [casterPid] = healAmount }.
+local function collectHeals(spellsActive, ownerPid)
+    local heals = {}
+    for _spellId, instances in pairs(spellsActive or {}) do
         for _, inst in ipairs(instances) do
-            if inst.hasPlayerCaster == true and inst.caster ~= nil and inst.caster.pid == pid then
+            if inst.hasPlayerCaster == true and inst.caster ~= nil
+               and inst.caster.pid ~= nil and inst.caster.pid ~= ownerPid then
+                local sum = 0
                 for _, eff in ipairs(inst.effects or {}) do
-                    if eff.id == enumerations.effects.ABSORB_HEALTH then
-                        heal = heal + math.abs(eff.magnitude or 0)
+                    if eff.id == enumerations.effects.ABSORB_HEALTH and (eff.magnitude or 0) > 0 then
+                        -- total transferred = magnitude (points/sec) * duration (sec)
+                        sum = sum + (eff.magnitude * math.max(eff.duration or 1, 1))
                     end
+                end
+                if sum > 0 then
+                    heals[inst.caster.pid] = (heals[inst.caster.pid] or 0) + sum
                 end
             end
         end
     end
-    if heal <= 0 then return end
+    return heals
+end
 
-    local cellDescription = caster.data.location.cell
-    local authority = nil
-    if cellDescription ~= nil and LoadedCells[cellDescription] ~= nil then
-        authority = LoadedCells[cellDescription]:GetAuthority()
+local function applyHeals(heals, ownerPid, source)
+    for casterPid, heal in pairs(heals) do
+        local caster = Players[casterPid]
+        if caster ~= nil and caster:IsLoggedIn() then
+            local newHp = math.min(tes3mp.GetHealthBase(casterPid),
+                                   tes3mp.GetHealthCurrent(casterPid) + heal)
+            tes3mp.SetHealthCurrent(casterPid, newHp)
+            tes3mp.SendStatsDynamic(casterPid)
+            log(enumerations.log.INFO, string.format(
+                "healed %s +%.1f -> %.1f (absorb via %s target, owner pid %s)",
+                logicHandler.GetChatName(casterPid), heal, newHp, source, tostring(ownerPid)))
+        end
     end
+end
 
-    -- Diagnostic: always log a self-absorb so magnitude / action / authority can be verified live.
-    log(enumerations.log.INFO, "self-absorb by " .. logicHandler.GetChatName(pid) .. " action=" ..
-        tostring(playerPacket.action) .. " heal=" .. heal .. " cellAuthority=" .. tostring(authority))
+-- Player target: the drained player's own PlayerSpellsActive packet.
+AbsorbHealthFix.OnPlayerSpellsActive = function(eventStatus, pid, playerPacket)
+    if playerPacket == nil or playerPacket.action ~= ADD_ACTION then return end
+    applyHeals(collectHeals(playerPacket.spellsActive, pid), pid, "player")
+end
 
-    -- Only restore once per cast (ADD) and only when the caster is NOT authority (engine did not heal).
-    if playerPacket.action ~= ADD_ACTION then return end
-    if authority == pid then return end
-
-    local newHp = math.min(tes3mp.GetHealthBase(pid), tes3mp.GetHealthCurrent(pid) + heal)
-    tes3mp.SetHealthCurrent(pid, newHp)
-    tes3mp.SendStatsDynamic(pid)
-    log(enumerations.log.INFO, "  -> restored caster to " .. newHp)
+-- NPC/creature target: the cell authority's ActorSpellsActive packet (one or more actors).
+AbsorbHealthFix.OnActorSpellsActive = function(eventStatus, pid, cellDescription, actors)
+    for _, actor in ipairs(actors or {}) do
+        if actor.spellActiveChangesAction == ADD_ACTION then
+            applyHeals(collectHeals(actor.spellsActive, pid), pid, "actor")
+        end
+    end
 end
 
 local function safe(name, fn)
     return function(...)
         local ok, err = pcall(fn, ...)
-        if not ok then log(enumerations.log.ERROR, name .. " error (server kept alive): " .. tostring(err)) end
+        if not ok then
+            log(enumerations.log.ERROR, name .. " error (server kept alive): " .. tostring(err))
+        end
     end
 end
 
-customEventHooks.registerHandler("OnPlayerSpellsActive", safe("OnPlayerSpellsActive", AbsorbHealthFix.OnPlayerSpellsActive))
+customEventHooks.registerHandler("OnPlayerSpellsActive",
+    safe("OnPlayerSpellsActive", AbsorbHealthFix.OnPlayerSpellsActive))
+customEventHooks.registerHandler("OnActorSpellsActive",
+    safe("OnActorSpellsActive", AbsorbHealthFix.OnActorSpellsActive))
 
 return AbsorbHealthFix
