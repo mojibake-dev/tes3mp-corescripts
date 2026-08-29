@@ -1,0 +1,46 @@
+# Push-to-deploy for the vvardenfell CoreScripts fork.
+#
+# WHY THIS IS A TRIGGER RATHER THAN A DEPLOY. The Ansible role that actually installs these scripts
+# lives in root/core, along with the restart gating that decides whether bouncing the server is safe.
+# Duplicating either here would mean two copies of the deploy logic drifting apart, so this job does
+# one thing: tell core's pipeline that the scripts changed. core then runs `deploy:corescripts`
+# followed by `restart:auto`, which restarts vvardenfell ONLY if no players are connected and
+# otherwise tells you to use `restart:kick`.
+#
+# WHY NOT A GITHUB ACTION. MANUAL-STEPS §CI/CD used to describe one, POSTing to
+# gitlab.gaussing.tv from GitHub's runners. That cannot work: gitlab.gaussing.tv has no public DNS
+# record and no WAN DNAT, it resolves only via the estate's Pi-hole. Publishing GitLab to the
+# internet to gain a deploy trigger would expose the Terraform state and a runner whose key reaches
+# root on the hypervisor, which is a bad trade for a convenience. So the trigger comes from inside
+# the estate instead, and this repo is pushed to BOTH remotes the way root/core already is.
+#
+# CONSEQUENCE WORTH KNOWING: a push that only reaches GitHub deploys nothing. The failure mode is
+# "the scripts did not deploy", never anything unsafe, but it is silent. See MANUAL-STEPS §13.
+
+stages: [trigger]
+
+deploy:trigger-core:
+  stage: trigger
+  tags: [tes3mp-deploy]
+  rules:
+    # Only the branch the server actually runs. A push to 0.8.1 or master is upstream history,
+    # not our deployment, and must not touch the live server.
+    - if: '$CI_COMMIT_BRANCH == "vvardenfell"'
+  script:
+    - |
+      if [ -z "${CORE_TRIGGER_TOKEN:-}" ]; then
+        echo "CORE_TRIGGER_TOKEN is empty. This job cannot trigger anything."
+        echo "  It is a masked, UNPROTECTED variable on this project precisely so that the"
+        echo "  vvardenfell branch (not a protected branch) can see it. If someone marked it"
+        echo "  protected, this is what that looks like: a job that succeeds at doing nothing."
+        exit 1
+      fi
+    - |
+      echo "== triggering root/core deploy:corescripts for $CI_COMMIT_SHORT_SHA =="
+      out=$(curl -fsS -X POST \
+        -F "token=${CORE_TRIGGER_TOKEN}" \
+        -F "ref=main" \
+        -F "variables[CORESCRIPTS_SHA]=${CI_COMMIT_SHA}" \
+        https://gitlab.gaussing.tv/api/v4/projects/1/trigger/pipeline)
+      echo "$out" | head -c 400; echo
+      echo "$out" | grep -q '"id"' || { echo "trigger did not return a pipeline id"; exit 1; }
